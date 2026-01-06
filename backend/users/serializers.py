@@ -1,130 +1,98 @@
+from django.contrib.auth import authenticate
 from rest_framework import serializers
-from rest_framework.exceptions import ValidationError
-from django.contrib.auth import authenticate, get_user_model
-from django.core.validators import RegexValidator
+from .models import User
 
-User = get_user_model()
-# REGISTER SERIALIZER
+from django.db import IntegrityError
+from rest_framework import serializers
+
 class RegisterSerializer(serializers.ModelSerializer):
-    confirm_password = serializers.CharField(write_only=True)
+    password = serializers.CharField(write_only=True)
 
     class Meta:
         model = User
-        fields = (
-            "username",
-            "password",
-            "confirm_password",
-        )
-        extra_kwargs = {
-            "password": {"write_only": True}
-        }
-
-    def validate(self, attrs):
-        if attrs["password"] != attrs["confirm_password"]:
-            raise ValidationError(
-                {"confirm_password": "Passwords do not match."}
-            )
-        return attrs
+        fields = ("username", "password", "mobile_number", "relative_mobile_number")
 
     def create(self, validated_data):
-        validated_data.pop("confirm_password")
-        user = User.objects.create_user(
-            username=validated_data["username"],
-            password=validated_data["password"]
-        )
-        return user
-# GET OTP SERIALIZER
-class GetOTPSerializer(serializers.Serializer):
-    mobile = serializers.CharField(
-        max_length=15,
-        validators=[
-            RegexValidator(
-                regex=r"^\d{10}$",
-                message="Enter valid 10 digit mobile number"
+        try:
+            password = validated_data.pop("password")
+
+            user = User.objects.create_user(
+                username=validated_data["username"],
+                password=password
             )
-        ]
-    )
-# VERIFY OTP (USER VERIFY)
-class VerifyOTPSerializer(serializers.Serializer):
-    otp = serializers.CharField(
-        min_length=4,
-        max_length=6
-    )
-# LOGIN SERIALIZER
+
+            user.mobile_number = validated_data.get("mobile_number") or None
+            user.relative_mobile_number = validated_data.get("relative_mobile_number")
+            user.save()
+
+            return user
+
+        except IntegrityError as e:
+            # Convert DB error → DRF error
+            if "mobile_number" in str(e):
+                raise serializers.ValidationError({
+                    "mobile_number": "This mobile number is already in use."
+                })
+
+            if "username" in str(e):
+                raise serializers.ValidationError({
+                    "username": "This username already exists."
+                })
+
+            raise serializers.ValidationError("Invalid data.")
+
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
-    def validate(self, attrs):
-        user = authenticate(
-            username=attrs.get("username"),
-            password=attrs.get("password")
-        )
+    def validate(self, data):
+        username = data.get("username")
+        password = data.get("password")
+
+        # Fetch user FIRST
+        user = User.objects.filter(username=username).first()
 
         if not user:
-            raise ValidationError("Invalid username or password.")
+            raise serializers.ValidationError("Invalid credentials")
 
+        # Check account lock
+        if user.is_locked():
+            raise serializers.ValidationError(
+                "Account locked due to multiple failed attempts"
+            )
+
+        # Block unverified users
         if not user.is_verified:
-            raise ValidationError("User is not verified. Please verify OTP.")
+            raise serializers.ValidationError(
+                "Account not verified. Please verify OTP first."
+            )
 
-        attrs["user"] = user
-        return attrs
-# USER DETAIL SERIALIZER
-class UserDetailSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = (
-            "id",
-            "username",
-            "mobile",
-            "is_verified",
+        # Authenticate password
+        authenticated_user = authenticate(
+            username=username,
+            password=password
         )
-# CHANGE PASSWORD SERIALIZER
-class ChangePasswordSerializer(serializers.Serializer):
-    old_password = serializers.CharField(write_only=True)
-    new_password = serializers.CharField(write_only=True)
-    confirm_new_password = serializers.CharField(write_only=True)
 
-    def validate(self, attrs):
-        if attrs["new_password"] != attrs["confirm_new_password"]:
-            raise ValidationError(
-                {"confirm_new_password": "New passwords do not match."}
-            )
-        return attrs
-# FORGOT PASSWORD (MOBILE INPUT)
-class ForgotPasswordMobileSerializer(serializers.Serializer):
-    mobile = serializers.CharField(
-        max_length=15,
-        validators=[
-            RegexValidator(
-                regex=r"^\d{10}$",
-                message="Enter valid 10 digit mobile number"
-            )
-        ]
-    )
-# PASSWORD RESET OTP VERIFY 
-class PasswordResetOTPVerifySerializer(serializers.Serializer):
-    mobile = serializers.CharField(
-        max_length=15,
-        validators=[
-            RegexValidator(
-                regex=r"^\d{10}$",
-                message="Enter valid 10 digit mobile number"
-            )
-        ]
-    )
-    otp = serializers.CharField(
-        min_length=4,
-        max_length=6
-    )
-# SET NEW PASSWORD AFTER OTP VERIFIED
-class SetNewPasswordSerializer(serializers.Serializer):
-    new_password = serializers.CharField(write_only=True)
-    confirm_new_password = serializers.CharField(write_only=True)
+        if not authenticated_user:
+            # user EXISTS here, safe to update
+            user.failed_login_attempts += 1
 
-    def validate(self, attrs):
-        if attrs["new_password"] != attrs["confirm_new_password"]:
-            raise ValidationError(
-                {"confirm_new_password": "Passwords do not match."}
-            )
-        return attrs
+            if user.failed_login_attempts >= 5:
+                user.lock_account()
+
+            user.save(update_fields=[
+                "failed_login_attempts",
+                "account_locked_until"
+            ])
+
+            raise serializers.ValidationError("Invalid credentials")
+
+        # Check active status
+        if not user.is_active:
+            raise serializers.ValidationError("Account disabled")
+
+        # Reset counters on success
+        user.reset_login_attempts()
+
+        data["user"] = user
+        return data
