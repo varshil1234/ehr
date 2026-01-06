@@ -56,8 +56,9 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'users',
-    
+    'rest_framework',
+    'rest_framework.authtoken',
+    'users'
 ]
 
 MIDDLEWARE = [
@@ -143,19 +144,21 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Custom User Model
-AUTH_USER_MODEL = "users.CustomUser"
+AUTH_USER_MODEL = "users.User"
 
 # REST Framework configuration
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
+    'EXCEPTION_HANDLER': 'global.exceptions.custom_exception_handler'
 }
 
 # Simple JWT configuration
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(days=30),  # 1 hour
     "REFRESH_TOKEN_LIFETIME": timedelta(days=90),     # 7 days
+    'AUTH_HEADER_TYPES': ('Bearer',)
 }
 
 LOGGING = {
