@@ -96,3 +96,25 @@ class LoginSerializer(serializers.Serializer):
 
         data["user"] = user
         return data
+class UserListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ("id", "username", "mobile_number", "is_verified")
+
+
+class UserPatchSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=False)
+
+    class Meta:
+        model = User
+        fields = ("mobile_number", "password")
+
+    def update(self, instance, validated_data):
+        if "mobile_number" in validated_data:
+            instance.mobile_number = validated_data["mobile_number"]
+
+        if "password" in validated_data:
+            instance.set_password(validated_data["password"])
+
+        instance.save()
+        return instance
