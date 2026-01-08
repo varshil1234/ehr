@@ -206,14 +206,21 @@ class UserModelView(ModelViewSet):
     # 🔹 PATCH
     def partial_update(self, request, *args, **kwargs):
         user_id = request.query_params.get("id")
+        looged_in_user = request.user
 
         if not user_id:
             return Response(
-                {"message": "id query param required"},
+                {"status": "error", "message": "ID required"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         user = get_object_or_404(self.get_queryset(), id=user_id)
+
+        if user != looged_in_user:
+            return Response(
+                {"status": "error", "message": "You can only update your own profile"},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         serializer = self.get_serializer(
             user, data=request.data, partial=True
@@ -222,6 +229,6 @@ class UserModelView(ModelViewSet):
         serializer.save()
 
         return Response(
-            {"message": "User updated successfully"},
+            {"status": "success", "message": "User updated successfully"},
             status=status.HTTP_200_OK
         )
