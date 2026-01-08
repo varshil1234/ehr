@@ -11,6 +11,9 @@ def custom_exception_handler(exc, context):
         if isinstance(exc, ValidationError):
             if isinstance(detail, dict) and "non_field_errors" in detail:
                 detail = detail["non_field_errors"][0]
+        
+        if isinstance(detail, dict) and "detail" in detail:
+                detail = detail["detail"]
 
         response.data = {
             "status": "error",
