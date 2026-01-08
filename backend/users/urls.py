@@ -8,4 +8,5 @@ urlpatterns = [
     path('login/', LoginView.as_view(), name='login'),
     path('password-reset-otp/', PasswordResetOTP.as_view()),
     path('reset-password/', ResetPassword.as_view()),
+    path('', UserModelView.as_view({'get': 'list','patch': 'partial_update'}))   
 ]
