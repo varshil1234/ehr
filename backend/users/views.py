@@ -1,3 +1,4 @@
+from urllib import request
 from django.shortcuts import get_object_or_404
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
@@ -9,6 +10,7 @@ from .serializers import RegisterSerializer, LoginSerializer,UserSerializer
 from rest_framework.viewsets import ModelViewSet
 from .models import User, OTP
 from .utils import generate_otp, send_otp, can_send_otp, is_otp_expired
+from rest_framework.filters import SearchFilter, OrderingFilter
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
@@ -175,56 +177,30 @@ class ResetPassword(APIView):
 
         return Response({"message": "Password reset successful"})
 
-class UserModelView(ModelViewSet):
-    permission_classes = [IsAuthenticated]
-    http_method_names = ["get", "patch"]
+class UserViewSet(ModelViewSet):
+    serializer_class = UserSerializer
+    filter_backends = [SearchFilter, OrderingFilter]
+    ordering_fields = ['id', 'name']
+    search_fields = ['id']
 
     def get_queryset(self):
-        return User.objects.filter(
-            is_staff=False,
-            is_superuser=False
-        )
+        return User.objects.filter(is_staff=False,is_superuser=False)
 
-    def get_serializer_class(self):
-        return UserSerializer
-
-    # 🔹 GET
-    def list(self, request, *args, **kwargs):
-        user_id = request.query_params.get("id")
-        queryset = self.get_queryset()
-
-        # 🔹 Single user
-        if user_id:
-            user = get_object_or_404(queryset, id=user_id)
-            serializer = self.get_serializer(user)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-        # 🔹 ALL REGISTERED USERS (NO MESSAGE)
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    # 🔹 PATCH
     def partial_update(self, request, *args, **kwargs):
-        user_id = request.query_params.get("id")
-        looged_in_user = request.user
+        pk = kwargs.get("pk")
+        logged_in_user = request.user
 
-        if not user_id:
-            return Response(
-                {"status": "error", "message": "ID required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # Get user from URL param <int:pk>
+        user = get_object_or_404(self.get_queryset(), pk=pk)
 
-        user = get_object_or_404(self.get_queryset(), id=user_id)
-
-        if user != looged_in_user:
+        # Ensure user can update only their own profile
+        if user != logged_in_user:
             return Response(
                 {"status": "error", "message": "You can only update your own profile"},
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        serializer = self.get_serializer(
-            user, data=request.data, partial=True
-        )
+        serializer = self.get_serializer(user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
 
