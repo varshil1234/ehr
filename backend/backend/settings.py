@@ -58,7 +58,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework.authtoken',
-    'users'
+    'users',
+    'patients',
 ]
 
 MIDDLEWARE = [
@@ -151,7 +152,11 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
-    'EXCEPTION_HANDLER': 'global.exceptions.custom_exception_handler'
+    'EXCEPTION_HANDLER': 'global.exceptions.custom_exception_handler',
+    
+    #pagination
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 20,
 }
 
 # Simple JWT configuration
