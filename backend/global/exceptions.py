@@ -17,7 +17,7 @@ def custom_exception_handler(exc, context):
 
         response.data = {
             "status": "error",
-            "detail": detail
+            "detail": detail['detail'] if 'detail' in detail else detail
         }
 
     return response

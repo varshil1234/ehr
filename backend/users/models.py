@@ -5,6 +5,18 @@ from django.utils import timezone
 from datetime import timedelta
 
 class User(AbstractBaseUser, PermissionsMixin):
+    ROLE_CHOICES = (
+    ("patient", "Patient"),
+    ("doctor", "Doctor"),
+    ("labtechnician", "Lab Technician"),
+)
+
+    role = models.CharField(
+    max_length=20,
+    choices=ROLE_CHOICES,
+    null=True,
+    blank=True   
+)
     username = models.CharField(max_length=150, unique=True)
     mobile_number = models.CharField(max_length=15, unique=True, null=True, blank=True)
     relative_mobile_number = models.CharField(max_length=15, null=True, blank=True)
