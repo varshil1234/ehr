@@ -7,6 +7,25 @@ from django.shortcuts import get_object_or_404
 from .models import Patient, PatientVital, MedicalHistory, MedicalFollowUp, FollowUpMedicine
 from .serializers import PatientSerializer, PatientVitalSerializer, MedicalHistorySerializer, MedicalFollowUpSerializer, FollowUpMedicineSerializer
 from rest_framework import viewsets
+from families.models import FamilyMember
+
+def get_accessible_patient_ids(user):
+    """
+    Access allowed to:
+    - Own patient
+    - OTP verified family members (ONLY if user is family head)
+    """
+    if not hasattr(user, "patient"):
+        return []
+
+    own_id = user.patient.id
+
+    family_member_ids = FamilyMember.objects.filter(
+        family__head_of_family=user.patient,
+        is_verified=True
+    ).values_list("patient_id", flat=True)
+
+    return list(set([own_id] + list(family_member_ids)))
 
 # patient viewset
 class PatientViewSet(ModelViewSet):
@@ -15,25 +34,14 @@ class PatientViewSet(ModelViewSet):
     http_method_names = ["get", "post", "patch"]
 
     def get_queryset(self):
-        """
-        Always return logged-in user's patient only
-        """
-        user = self.request.user
-        if hasattr(user, "patient"):
-            return Patient.objects.filter(
-                user=user
-            )
-        return Patient.objects.none()
+        allowed_ids = get_accessible_patient_ids(self.request.user)
+        return Patient.objects.filter(id__in=allowed_ids)
 
-    # GET → own patient
+    # GET → own + verified family members
     def list(self, request, *args, **kwargs):
-        patient = getattr(request.user, "patient", None)
-
-        if not patient:
-            return Response([], status=status.HTTP_200_OK)
-
-        serializer = self.get_serializer(patient)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
     # POST → create patient (only once)
     def create(self, request, *args, **kwargs):
@@ -52,12 +60,15 @@ class PatientViewSet(ModelViewSet):
             status=status.HTTP_201_CREATED
         )
 
-    # PATCH → update own patient
+    # PATCH → update own OR verified family members profile
     def partial_update(self, request, pk=None, *args, **kwargs):
+        allowed_ids = get_accessible_patient_ids(request.user)
+        
+        # Check if the patient being updated is in allowed_ids
         patient = get_object_or_404(
             Patient,
             pk=pk,
-            user=request.user
+            id__in=allowed_ids
         )
 
         serializer = self.get_serializer(
@@ -83,73 +94,69 @@ class PatientVitalsViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated]
     http_method_names = ["get", "post"]
 
-    # CENTRAL SECURITY CHECK
+    # CENTRAL ACCESS LOGIC
     def _get_patient(self):
         user = self.request.user
         url_patient_id = self.kwargs.get("patient_id")
+        allowed_ids = get_accessible_patient_ids(user)
 
-        if not hasattr(user, "patient"):
-            raise PermissionDenied("Only patients can access vitals.")
+        if int(url_patient_id) in allowed_ids:
+            return Patient.objects.get(id=url_patient_id)
 
-        if user.patient.id != url_patient_id:
-            raise PermissionDenied(
-                "You are not allowed to access other patient's vitals."
-            )
+        raise PermissionDenied(
+            "You are not allowed to access other patient's vitals."
+        )
 
-        return user.patient
-
-    # GET → list vitals
+    # GET → list vitals (self + verified family members)
     def get_queryset(self):
         patient = self._get_patient()
         return PatientVital.objects.filter(patient=patient)
 
-    # POST → create new vitals
+    # POST → create vitals (Self + verified family members)
     def perform_create(self, serializer):
-        patient = self._get_patient()
+        patient = self._get_patient() # This checks permission
         serializer.save(patient=patient)
 
-# patient vitals viewset
+# patient medical history viewset
 class MedicalHistoryViewSet(viewsets.ModelViewSet):
     serializer_class = MedicalHistorySerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ["get", "post", "patch"]
 
-    # default deny (important for medical data)
     queryset = MedicalHistory.objects.none()
 
-    # -------- CENTRAL SECURITY CHECK --------
+    # -------- CENTRAL ACCESS CHECK --------
     def _get_patient(self):
         user = self.request.user
         patient_id = self.kwargs.get("patient_id") or self.kwargs.get("pk")
+        allowed_ids = get_accessible_patient_ids(user)
 
-        if not hasattr(user, "patient"):
-            raise PermissionDenied("Only patients can access medical history.")
+        if int(patient_id) in allowed_ids:
+            return Patient.objects.get(id=patient_id)
 
-        if user.patient.id != patient_id:
-            raise PermissionDenied(
-                "You are not allowed to access other patient's medical history."
-            )
+        raise PermissionDenied(
+            "You are not allowed to access other patient's medical history."
+        )
 
-        return user.patient
-
-    # -------- LIST --------
+    # -------- LIST (GET) --------
     def get_queryset(self):
         patient = self._get_patient()
         return MedicalHistory.objects.filter(patient=patient)
 
-    # -------- CREATE --------
+    # -------- CREATE (POST) --------
     def perform_create(self, serializer):
-        patient = self._get_patient()
+        patient = self._get_patient() # Allows family head for verified members
         serializer.save(patient=patient)
 
-    # -------- UPDATE --------
+    # -------- UPDATE (PATCH) --------
     def perform_update(self, serializer):
-        patient = self._get_patient()
+        user = self.request.user
         instance = serializer.instance
+        allowed_ids = get_accessible_patient_ids(user)
 
-        if instance.patient != patient:
+        if instance.patient.id not in allowed_ids:
             raise PermissionDenied(
-                "You can only update your own medical history."
+                "You can only update allowed patient's medical history."
             )
 
         serializer.save()
@@ -166,31 +173,34 @@ class FollowUpMedicineViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     http_method_names = ["get", "post", "patch", "delete"]
 
+    # -------- CENTRAL FOLLOWUP ACCESS --------
     def _get_followup(self):
         user = self.request.user
         history_id = self.kwargs["history_id"]
         followup_id = self.kwargs["followup_id"]
+        allowed_ids = get_accessible_patient_ids(user)
 
-        if not hasattr(user, "patient"):
-            raise PermissionDenied("Only patients allowed.")
-
+        # Updated to check verified family members access
         followup = MedicalFollowUp.objects.filter(
             id=followup_id,
             medical_history__id=history_id,
-            medical_history__patient=user.patient
+            medical_history__patient_id__in=allowed_ids
         ).first()
 
-        if not followup:
-            raise PermissionDenied("Not your follow-up.")
+        if followup:
+            return followup
 
-        return followup
+        raise PermissionDenied("Not your follow-up or no permission.")
 
+    # -------- LIST (GET) --------
     def get_queryset(self):
         followup = self._get_followup()
         return FollowUpMedicine.objects.filter(followup=followup)
 
+    # -------- CREATE (POST) --------
     def create(self, request, *args, **kwargs):
-        followup = self._get_followup()
+        followup = self._get_followup() # Logic allows verified family access
+        
         serializer = self.get_serializer(
             data=request.data,
             context={"followup": followup}
@@ -199,6 +209,7 @@ class FollowUpMedicineViewSet(viewsets.ModelViewSet):
         serializer.save()
         return Response(serializer.data, status=201)
 
+    # -------- UPDATE (PATCH) --------
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
         followup = self._get_followup()
@@ -206,11 +217,16 @@ class FollowUpMedicineViewSet(viewsets.ModelViewSet):
         if instance.followup != followup:
             raise PermissionDenied("Not your medicine.")
 
-        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=True
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
 
+    # -------- DELETE --------
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         followup = self._get_followup()
@@ -228,34 +244,35 @@ class MedicalFollowUpViewSet(viewsets.ModelViewSet):
 
     queryset = MedicalFollowUp.objects.none()
 
-    # -------- SECURITY CHECK --------
+    # -------- CENTRAL SECURITY CHECK --------
     def _get_history(self):
         user = self.request.user
         history_id = self.kwargs.get("history_id")
-
-        if not hasattr(user, "patient"):
-            raise PermissionDenied("Only patients can access follow-ups.")
+        allowed_ids = get_accessible_patient_ids(user)
 
         history = MedicalHistory.objects.filter(
             id=history_id,
-            patient=user.patient
+            patient_id__in=allowed_ids
         ).first()
 
-        if not history:
-            raise PermissionDenied(
-                "You are not allowed to access this medical history."
-            )
+        if history:
+            return history
 
-        return history
+        raise PermissionDenied(
+            "You are not allowed to access this medical history."
+        )
 
-    # -------- LIST --------
+    # -------- LIST (GET) --------
     def get_queryset(self):
         history = self._get_history()
-        return MedicalFollowUp.objects.filter(medical_history=history)
+        return MedicalFollowUp.objects.filter(
+            medical_history=history
+        )
 
-    # -------- CREATE (FIXED) --------
+    # -------- CREATE (POST) --------
     def create(self, request, *args, **kwargs):
         history = self._get_history()
+
         serializer = self.get_serializer(
             data=request.data,
             context={"medical_history": history}
@@ -264,20 +281,24 @@ class MedicalFollowUpViewSet(viewsets.ModelViewSet):
         serializer.save()
         return Response(serializer.data, status=201)
 
-    # -------- UPDATE --------
+    # -------- UPDATE (PATCH) --------
     def perform_update(self, serializer):
         history = self._get_history()
+
         if serializer.instance.medical_history != history:
             raise PermissionDenied(
-                "You can only update your own follow-ups."
+                "You can only update allowed follow-ups."
             )
+
         serializer.save()
 
     # -------- DELETE --------
     def perform_destroy(self, instance):
         history = self._get_history()
+
         if instance.medical_history != history:
             raise PermissionDenied(
-                "You can only delete your own follow-ups."
+                "You can only delete allowed follow-ups."
             )
+
         instance.delete()
