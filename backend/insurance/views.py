@@ -4,6 +4,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from .models import Insurance, InsuranceDocument
 from .serializers import InsuranceSerializer, InsuranceDocumentSerializer
+from patients.views import get_accessible_patient_ids
 
 class InsuranceViewSet(viewsets.ModelViewSet):
     serializer_class = InsuranceSerializer
@@ -12,34 +13,24 @@ class InsuranceViewSet(viewsets.ModelViewSet):
 
     queryset = Insurance.objects.none()
 
-    
-    def _get_patient(self):
-        user = self.request.user
-        if not hasattr(user, "patient"):
-            raise PermissionDenied("Only patients can access insurance records.")
-        return user.patient
-
-
     def get_queryset(self):
-        patient = self._get_patient()
-        return Insurance.objects.filter(patient=patient)
+        # self+family access
+        allowed_ids = get_accessible_patient_ids(self.request.user)
+        return Insurance.objects.filter(patient_id__in=allowed_ids)
 
-   
     def perform_create(self, serializer):
-        patient = self._get_patient()
-        serializer.save(patient=patient)
-
-    def perform_update(self, serializer):
-        patient = self._get_patient()
-        if serializer.instance.patient != patient:
-            raise PermissionDenied("You can only update your own insurance policies.")
         serializer.save()
 
- 
+    def perform_update(self, serializer):
+        allowed_ids = get_accessible_patient_ids(self.request.user)
+        if serializer.instance.patient.id not in allowed_ids:
+            raise PermissionDenied("You can only update insurance policies for yourself or verified family members.")
+        serializer.save()
+
     def perform_destroy(self, instance):
-        patient = self._get_patient()
-        if instance.patient != patient:
-            raise PermissionDenied("You can only delete your own insurance policies.")
+        allowed_ids = get_accessible_patient_ids(self.request.user)
+        if instance.patient.id not in allowed_ids:
+            raise PermissionDenied("You can only delete insurance policies for yourself or verified family members.")
         instance.delete()
 
 
@@ -51,17 +42,16 @@ class InsuranceDocumentViewSet(viewsets.ModelViewSet):
     def _get_insurance(self):
         user = self.request.user
         insurance_id = self.kwargs.get("insurance_id")
+        allowed_ids = get_accessible_patient_ids(user) #same logic here
 
-        if not hasattr(user, "patient"):
-            raise PermissionDenied("Only patients allowed.")
-
+        
         insurance = Insurance.objects.filter(
             id=insurance_id,
-            patient=user.patient
+            patient_id__in=allowed_ids
         ).first()
 
         if not insurance:
-            raise PermissionDenied("Not your insurance policy.")
+            raise PermissionDenied("Not your insurance policy or no permission.")
 
         return insurance
 

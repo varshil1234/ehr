@@ -39,6 +39,7 @@ class InsuranceSerializer(serializers.ModelSerializer):
         model = Insurance
         fields = (
             "id",
+            "patient_id",
             "provider_name",
             "policy_number",
             "coverage_type",
@@ -63,7 +64,21 @@ class InsuranceSerializer(serializers.ModelSerializer):
 
    
     def create(self, validated_data):
-        patient = self.context["request"].user.patient
+        from patients.views import get_accessible_patient_ids
+        from patients.models import Patient
+
+        user = self.context["request"].user
+        patient_id = validated_data.pop("patient_id", None)
+
+        if patient_id:
+            allowed_ids = get_accessible_patient_ids(user)
+            if patient_id not in allowed_ids:
+                raise serializers.ValidationError({"patient_id": "You do not have permission to add insurance for this patient."})
+            patient = Patient.objects.get(id=patient_id)
+        else:
+            if not hasattr(user, "patient"):
+                raise serializers.ValidationError("Only patients can create insurance.")
+            patient = user.patient
 
         return Insurance.objects.create(
             patient=patient,
@@ -100,6 +115,7 @@ class InsuranceSerializer(serializers.ModelSerializer):
 
         return {
             "id": obj.id,
+            "patient_id": obj.patient_id,
             "provider_name": dec(obj.provider_name),
             "policy_number": dec(obj.policy_number),
             "coverage_type": dec(obj.coverage_type),
