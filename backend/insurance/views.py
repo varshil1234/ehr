@@ -2,6 +2,8 @@ from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
+from rest_framework.filters import SearchFilter, OrderingFilter
+from django_filters.rest_framework import DjangoFilterBackend
 from .models import Insurance, InsuranceDocument
 from .serializers import InsuranceSerializer, InsuranceDocumentSerializer
 from patients.views import get_accessible_patient_ids
@@ -9,6 +11,10 @@ from patients.views import get_accessible_patient_ids
 class InsuranceViewSet(viewsets.ModelViewSet):
     serializer_class = InsuranceSerializer
     permission_classes = [IsAuthenticated]
+    filter_backends = [SearchFilter, OrderingFilter, DjangoFilterBackend]
+    ordering_fields = ['id']
+    search_fields = ['id']
+    filterset_fields = ['patient_id']
     http_method_names = ["get", "post", "patch", "delete"]
 
     queryset = Insurance.objects.none()
