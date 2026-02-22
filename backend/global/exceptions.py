@@ -15,6 +15,14 @@ def custom_exception_handler(exc, context):
         if isinstance(detail, dict) and "detail" in detail:
                 detail = detail["detail"]
 
+        # Normalize error message safely
+        if isinstance(detail, dict):
+            message = detail.get("detail", detail)
+        elif isinstance(detail, list):
+            message = detail[0]
+        else:
+            message = str(detail)
+
         response.data = {
             "status": "error",
             "detail": detail['detail'] if 'detail' in detail else detail
