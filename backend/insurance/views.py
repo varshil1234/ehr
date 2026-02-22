@@ -11,17 +11,38 @@ from patients.views import get_accessible_patient_ids
 class InsuranceViewSet(viewsets.ModelViewSet):
     serializer_class = InsuranceSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [SearchFilter, OrderingFilter, DjangoFilterBackend]
-    ordering_fields = ['id']
-    search_fields = ['id']
-    filterset_fields = ['patient_id']
     http_method_names = ["get", "post", "patch", "delete"]
+
+    #policy ordering options also given
+    filter_backends = [OrderingFilter]
+    ordering_fields = ['validity_end', 'created_at']
+    ordering = ['-validity_end']  
 
     queryset = Insurance.objects.none()
 
     def get_queryset(self):
-        # self+family access
         allowed_ids = get_accessible_patient_ids(self.request.user)
+        
+        if self.action == 'list':
+            patient_id = self.request.query_params.get("patient_id")
+            
+            if not patient_id:
+                raise ValidationError({"patient_id": "Please provide a patient_id to fetch insurances."})
+            
+            if int(patient_id) not in allowed_ids:
+                raise PermissionDenied("You do not have access to this patient's insurance policies.")
+            
+            qs = Insurance.objects.filter(patient_id=patient_id)
+
+            # is_active filter
+            is_active = self.request.query_params.get("is_active")
+            if is_active == 'true':
+                qs = qs.filter(validity_end__gte=timezone.now().date())
+            elif is_active == 'false':
+                qs = qs.filter(validity_end__lt=timezone.now().date())
+
+            return qs
+
         return Insurance.objects.filter(patient_id__in=allowed_ids)
 
     def perform_create(self, serializer):

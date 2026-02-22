@@ -1,4 +1,7 @@
+import os
 from django.db import models
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 from patients.models import Patient
 
 class Insurance(models.Model):
@@ -40,7 +43,7 @@ class InsuranceDocument(models.Model):
         related_name="documents"
     )
 
-    document = models.FileField(upload_to="insurance_docs/")
+    document = models.FileField(upload_to="insurance-docs/")
     document_name = models.CharField(max_length=255, blank=True, null=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
@@ -52,3 +55,10 @@ class InsuranceDocument(models.Model):
 
     def __str__(self):
         return f"Doc {self.id} for Insurance {self.insurance_id}"
+
+@receiver(post_delete, sender=InsuranceDocument)
+def auto_delete_file_on_delete(sender, instance, **kwargs):
+    #Delete file from filepath
+    if instance.document:
+        if os.path.isfile(instance.document.path):
+            os.remove(instance.document.path)
