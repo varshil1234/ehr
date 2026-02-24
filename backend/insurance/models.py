@@ -36,14 +36,14 @@ class Insurance(models.Model):
 
 
 class InsuranceDocument(models.Model):
-
     insurance = models.ForeignKey(
         Insurance,
         on_delete=models.CASCADE,
         related_name="documents"
     )
 
-    document = models.FileField(upload_to="insurance-docs/")
+    # FIX: Saves exactly to media/insurance/<FILENAME.pdf>
+    document = models.FileField(upload_to="insurance/")
     document_name = models.CharField(max_length=255, blank=True, null=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 

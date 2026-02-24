@@ -13,40 +13,48 @@ class InsuranceViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     http_method_names = ["get", "post", "patch", "delete"]
 
-    #policy ordering options also given
     filter_backends = [OrderingFilter]
     ordering_fields = ['validity_end', 'created_at']
-    ordering = ['-validity_end']  
+    ordering = ['-validity_end']
 
     queryset = Insurance.objects.none()
 
     def get_queryset(self):
         allowed_ids = get_accessible_patient_ids(self.request.user)
         
-        if self.action == 'list':
-            patient_id = self.request.query_params.get("patient_id")
-            
-            if not patient_id:
-                raise ValidationError({"patient_id": "Please provide a patient_id to fetch insurances."})
-            
+        #if we are trying to acess via patient_id from url path
+        patient_id = self.kwargs.get("patient_id")
+        
+        if patient_id:
             if int(patient_id) not in allowed_ids:
                 raise PermissionDenied("You do not have access to this patient's insurance policies.")
-            
             qs = Insurance.objects.filter(patient_id=patient_id)
+        else:
+            # If accessing detail view (like patch/delete on /<pk>/)
+            qs = Insurance.objects.filter(patient_id__in=allowed_ids)
 
-            # is_active filter
-            is_active = self.request.query_params.get("is_active")
-            if is_active == 'true':
-                qs = qs.filter(validity_end__gte=timezone.now().date())
-            elif is_active == 'false':
-                qs = qs.filter(validity_end__lt=timezone.now().date())
+        # Custom is_active filter
+        is_active = self.request.query_params.get("is_active")
+        if is_active == 'true':
+            qs = qs.filter(validity_end__gte=timezone.now().date())
+        elif is_active == 'false':
+            qs = qs.filter(validity_end__lt=timezone.now().date())
 
-            return qs
-
-        return Insurance.objects.filter(patient_id__in=allowed_ids)
+        return qs
 
     def perform_create(self, serializer):
-        serializer.save()
+        patient_id = self.kwargs.get("patient_id")
+        allowed_ids = get_accessible_patient_ids(self.request.user)
+
+        if not patient_id:
+            raise ValidationError("Patient ID is required in the URL path.")
+        
+        if int(patient_id) not in allowed_ids:
+            raise PermissionDenied("You do not have access to create insurance for this patient.")
+
+        # Assign the patient directly using the ID from the URL path!
+        patient = Patient.objects.get(id=patient_id)
+        serializer.save(patient=patient)
 
     def perform_update(self, serializer):
         allowed_ids = get_accessible_patient_ids(self.request.user)

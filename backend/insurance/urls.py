@@ -23,7 +23,8 @@ document_detail = InsuranceDocumentViewSet.as_view({
 
 urlpatterns = [
     # insurance api
-    path('', insurance_list, name='insurance-list'),
+   #patient id is requored
+    path('patient/<int:patient_id>/', insurance_list, name='insurance-list'),
     path('<int:pk>/', insurance_detail, name='insurance-detail'),
 
     # documents api
