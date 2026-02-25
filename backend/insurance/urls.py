@@ -22,12 +22,16 @@ document_detail = InsuranceDocumentViewSet.as_view({
 })
 
 urlpatterns = [
-    # insurance api
-   #patient id is requored
-    path('patient/<int:patient_id>/', insurance_list, name='insurance-list'),
+    #self route
+    path('', insurance_list, name='insurance-list-me'),
+    
+    #family member route
+    path('patient/<int:patient_id>/', insurance_list, name='insurance-list-patient'),
+    
+    # Detail views
     path('<int:pk>/', insurance_detail, name='insurance-detail'),
 
-    # documents api
+    # Documents APIs
     path('<int:insurance_id>/documents/', document_list, name='insurance-document-list'),
     path('<int:insurance_id>/documents/<int:pk>/', document_detail, name='insurance-document-detail'),
 ]

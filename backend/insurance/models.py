@@ -42,7 +42,7 @@ class InsuranceDocument(models.Model):
         related_name="documents"
     )
 
-    # FIX: Saves exactly to media/insurance/<FILENAME.pdf>
+    # Saves to media/insurance/<FILENAME.pdf>
     document = models.FileField(upload_to="insurance/")
     document_name = models.CharField(max_length=255, blank=True, null=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)

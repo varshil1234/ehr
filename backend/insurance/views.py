@@ -1,12 +1,14 @@
+from django.utils import timezone  # Add this import to fix the NameError!
 from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Insurance, InsuranceDocument
 from .serializers import InsuranceSerializer, InsuranceDocumentSerializer
 from patients.views import get_accessible_patient_ids
+from patients.models import Patient
 
 class InsuranceViewSet(viewsets.ModelViewSet):
     serializer_class = InsuranceSerializer
@@ -20,40 +22,53 @@ class InsuranceViewSet(viewsets.ModelViewSet):
     queryset = Insurance.objects.none()
 
     def get_queryset(self):
-        allowed_ids = get_accessible_patient_ids(self.request.user)
+        user = self.request.user
+        allowed_ids = get_accessible_patient_ids(user)
         
-        #if we are trying to acess via patient_id from url path
-        patient_id = self.kwargs.get("patient_id")
-        
-        if patient_id:
-            if int(patient_id) not in allowed_ids:
-                raise PermissionDenied("You do not have access to this patient's insurance policies.")
-            qs = Insurance.objects.filter(patient_id=patient_id)
-        else:
-            # If accessing detail view (like patch/delete on /<pk>/)
-            qs = Insurance.objects.filter(patient_id__in=allowed_ids)
+        # Only apply this routing logic when listing multiple insurances
+        if self.action == 'list':
+            patient_id = self.kwargs.get("patient_id")
+            
+            if patient_id:
+                # If they passed an ID in the URL, fetch that specific family member
+                if int(patient_id) not in allowed_ids:
+                    raise PermissionDenied("You do not have access to this patient's insurance policies.")
+                qs = Insurance.objects.filter(patient_id=patient_id)
+            else:
+                # If no ID in URL, default to their own personal insurances
+                if hasattr(user, 'patient'):
+                    qs = Insurance.objects.filter(patient_id=user.patient.id)
+                else:
+                    qs = Insurance.objects.none()
 
-        # Custom is_active filter
-        is_active = self.request.query_params.get("is_active")
-        if is_active == 'true':
-            qs = qs.filter(validity_end__gte=timezone.now().date())
-        elif is_active == 'false':
-            qs = qs.filter(validity_end__lt=timezone.now().date())
+            # Custom is_active filter
+            is_active = self.request.query_params.get("is_active")
+            if is_active == 'true':
+                qs = qs.filter(validity_end__gte=timezone.now().date())
+            elif is_active == 'false':
+                qs = qs.filter(validity_end__lt=timezone.now().date())
 
-        return qs
+            return qs
+
+        # If accessing detail view (like patch/delete on /<pk>/)
+        return Insurance.objects.filter(patient_id__in=allowed_ids)
 
     def perform_create(self, serializer):
+        user = self.request.user
         patient_id = self.kwargs.get("patient_id")
-        allowed_ids = get_accessible_patient_ids(self.request.user)
+        allowed_ids = get_accessible_patient_ids(user)
 
-        if not patient_id:
-            raise ValidationError("Patient ID is required in the URL path.")
-        
-        if int(patient_id) not in allowed_ids:
-            raise PermissionDenied("You do not have access to create insurance for this patient.")
+        if patient_id:
+            # Adding for a family member
+            if int(patient_id) not in allowed_ids:
+                raise PermissionDenied("You do not have access to create insurance for this patient.")
+            patient = Patient.objects.get(id=patient_id)
+        else:
+            # Adding for themselves
+            if not hasattr(user, "patient"):
+                raise ValidationError("You must create a patient profile for yourself before adding insurance.")
+            patient = user.patient
 
-        # Assign the patient directly using the ID from the URL path!
-        patient = Patient.objects.get(id=patient_id)
         serializer.save(patient=patient)
 
     def perform_update(self, serializer):
@@ -77,9 +92,8 @@ class InsuranceDocumentViewSet(viewsets.ModelViewSet):
     def _get_insurance(self):
         user = self.request.user
         insurance_id = self.kwargs.get("insurance_id")
-        allowed_ids = get_accessible_patient_ids(user) #same logic here
+        allowed_ids = get_accessible_patient_ids(user)
 
-        
         insurance = Insurance.objects.filter(
             id=insurance_id,
             patient_id__in=allowed_ids
